@@ -1,7 +1,137 @@
 <html>
 <head><title>AAQC formatter</title></head>
-<p>Fill this box with a list of links, each starting /r/TheMotte/comments..., newline-separated. Don't include any parameters like ?context=3 or the https://www.reddit.com part of the link. This can only handle links to comments; don't include links to top-level posts.</p>
+<p>Fill this box with a list of links, each starting /r/TheMotte/comments..., newline-separated. Don't include any parameters like ?context=3 or the https://www.reddit.com part of the link. This can only handle links to comments; don't include links to top-level posts. Open your browser's Javascript console to see logging.</p>
 <textarea id='inp' rows='10' cols='80'></textarea><br/><button onclick='process()'>Process</button>
 <script>
+function httpGet(url, callback) {
+	var xmlHttp=new XMLHttpRequest();
+	xmlHttp.onreadystatechange=function() { 
+		xmlHttp.readyState===4 && xmlHttp.status===200 && callback(xmlHttp.responseText);
+	}
+	xmlHttp.open('GET', url, true);
+	xmlHttp.send(null);
+}
+function handleArray(array, handlerWithCallback, finalCallback) {
+	function f(i) {
+		if (i >= array.length) { return finalCallback(); }
+		handlerWithCallback(array[i], function(){f(i+1)});
+	}
+	f(0);
+}
+function generateExcerpt(comment){
+	return sanitize(comment.body.split('\n')[0]).substring(0,200).trim();
+}
+function generateTitle(comment,totalFrequencies){
+	var commentFrequencies=computeCommentFrequencies(comment);
+	var highest=Object.keys(commentFrequencies).sort(function(a,b){
+		if (commentFrequencies[b]===1 && totalFrequencies[b]===1) {return -1}
+		if (commentFrequencies[a]===1 && totalFrequencies[a]===1) {return 1}
+		return (commentFrequencies[b]/totalFrequencies[b])-(commentFrequencies[a]/totalFrequencies[a]);
+	});
+	
+	return highest.slice(0,10).join(', ').toUpperCase();
+}
+function sanitize(text){
+	return text
+		.replace(/\[([^\]]*)\]\(([^\)]*)\)/g, '$1') // remove links
+		.replace(/\[/g,'(').replace(/\]/g,')'); // [] -> ()
+}
+function computeCommentFrequencies(comment){
+	var commentFrequencies={};
+	var sanitized=sanitize(comment.body).toLowerCase().replace(/[^a-z ]/g,' ').replace(/\s+/g,' ');
+	var words=sanitized.split(' ');
+	words.forEach(function(word){
+		commentFrequencies[word]=1+(commentFrequencies[word]||0);
+	});
+	return commentFrequencies;
+}
+function computeTotalFrequencies(commentsByTopLevelId, otherComments){
+	var totalFrequencies={};
+	function tallyComment(comment) {
+		var commentFrequencies=computeCommentFrequencies(comment);
+		for (var word in commentFrequencies){
+			totalFrequencies[word]=commentFrequencies[word]+(totalFrequencies[word]||0);
+		}
+	}
+	for (key in commentsByTopLevelId) {
+		commentsByTopLevelId[key].forEach(tallyComment);
+	}
+	otherComments.forEach(tallyComment);
+	return totalFrequencies;
+}
+
+var REDDIT_PREFIX='https://api.reddit.com';
+
+function process() {
+	var input=document.getElementById('inp').value;
+	var links=input.split('\n').filter(function(x){return x;});
+	console.log("Handling", links.length, "links");
+	var topLevels={};
+	var commentsByTopLevelId={};
+	var nonCW=[];
+	handleArray(links, function(link, callback) {
+		if (!link) {
+			return callback();
+		} else if (link.indexOf('culture_war_roundup_for_the_week_of_')===-1){
+			var url=REDDIT_PREFIX+link;
+			console.log("Getting nonCW link:", url);
+			httpGet(url, function(res){
+				var obj=JSON.parse(res);
+				var comment=obj[1].data.children[0].data;
+				nonCW.push(comment);
+				callback();
+			});
+		} else {
+			var url=REDDIT_PREFIX+link;
+			console.log("Getting CW link:", url);
+			httpGet(url, function(res){
+				var obj=JSON.parse(res);
+				var topLevel=obj[0].data.children[0].data;
+				topLevels[topLevel.id]=topLevel;
+				if (!commentsByTopLevelId[topLevel.id]) {
+					commentsByTopLevelId[topLevel.id]=[];
+				}
+				var comment=obj[1].data.children[0].data;
+				commentsByTopLevelId[topLevel.id].push(comment);
+				callback();
+			});
+		}
+	}, function() {
+		var topLevelIds=Object.keys(topLevels);
+		topLevelIds.sort();
+		var output='#Culture War\n\n';
+		var totalFrequencies=computeTotalFrequencies(commentsByTopLevelId,nonCW);
+		topLevelIds.forEach(function(topLevelId){
+			var topLevel=topLevels[topLevelId];
+			output+=('##'+topLevel.title+'\n\n');
+			var comments=commentsByTopLevelId[topLevelId];
+			comments.sort(function(a,b){return a.created_utc-b.created_utc});
+			comments.forEach(function(comment){
+				var excerpt=generateExcerpt(comment);
+				var title=generateTitle(comment, totalFrequencies);
+				output+=(
+					'/u/'+comment.author+' on '+title+
+					':\n\n* "['+excerpt+']('+comment.permalink+'?context=3)..."\n\n'
+				);
+			});
+		});
+
+		output+='----\n\n#Non-Culture War\n\n';
+
+		nonCW.sort(function(a,b){return a.created_utc-b.created_utc});
+		nonCW.forEach(function(comment){
+			var excerpt=generateExcerpt(comment);
+			var title=generateTitle(comment, totalFrequencies);
+			var date=new Date(comment.created_utc*1000).toISOString().split("T")[0];
+			output+=(
+				'('+date+') /u/'+comment.author+' on '+title+
+				':\n\n* "['+excerpt+']('+comment.permalink+'?context=3)..."\n\n'
+			);
+		});
+
+		document.getElementById('inp').value=output;
+		console.log('Done');
+	});
+}
 </script>
 </html>
