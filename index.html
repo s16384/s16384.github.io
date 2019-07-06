@@ -23,8 +23,31 @@ function handleArray(array, handlerWithCallback, finalCallback) {
 	}
 	f(0);
 }
+function toText(html) {
+	var div=document.createElement('div');
+	div.innerHTML=html;
+	var text=div.innerText;
+	div.remove();
+	return text;
+}
+function toHtml(text) {
+	var div=document.createElement('div');
+	div.innerText=text;
+	var html=div.innerHTML;
+	div.remove();
+	return html;
+}
 function generateExcerpt(comment){
-	return sanitize(comment.body.split('\n')[0]).substring(0,200).trim();
+	var paragraphs=comment.body.split('\n');
+	for (var i=0;i<paragraphs.length;i++) {
+		var paragraph=paragraphs[i];
+		var substring=sanitize(paragraph).substring(0,200);
+		var resultText=toText(toText(substring)).trim().replace(/^\u200B+/g,'').replace(/\u200B+$/g,'');
+		if (resultText && !resultText.startsWith(">")) {
+			return toHtml(toHtml(resultText));
+		}
+	}
+	return comment.permalink;
 }
 function generateTitle(comment,totalFrequencies){
 	var commentFrequencies=computeCommentFrequencies(comment);
@@ -104,7 +127,7 @@ function process() {
 	}, function() {
 		var topLevelIds=Object.keys(topLevels);
 		topLevelIds.sort();
-		var output='#Culture War\n\n';
+		var output='#Thread\n\n';
 		var totalFrequencies=computeTotalFrequencies(commentsByTopLevelId,nonCW);
 		topLevelIds.forEach(function(topLevelId){
 			var topLevel=topLevels[topLevelId];
@@ -121,7 +144,7 @@ function process() {
 			});
 		});
 
-		output+='----\n\n#Non-Culture War\n\n';
+		output+='----\n\n#Non-Thread\n\n';
 
 		nonCW.sort(function(a,b){return a.created_utc-b.created_utc});
 		nonCW.forEach(function(comment){
